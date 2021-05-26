@@ -12,6 +12,7 @@ class DurationPredictor(torch.nn.Module):
             LConvBlock(dim, 3, 0.1),
             LConvBlock(dim, 3, 0.1),
             LConvBlock(dim, 3, 0.1),
+            torch.nn.LayerNorm(dim)
         )
         self.projection = torch.nn.Linear(dim, 1)
         self.softplus = torch.nn.Softplus()

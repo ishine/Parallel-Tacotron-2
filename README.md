@@ -9,6 +9,9 @@ Below is a block diagram of the model (cropped from the paper)
 
 <img src="./assets/model.png" alt="digram" width="400"/>
 
+## Notes:
+
+- This is a non-vae implementation. We remove VAE subnetwork and make sure the remained network is working correctly. Most importantly, we want to make sure the network converge with soft-dtw loss. We will introduce the VAE after than.
 
 
 ## Installation
@@ -45,3 +48,10 @@ dataset/
 │       ├── LJ001-0002.wav
 ```
 
+
+## Train Parallel Tacotron 2
+
+Run the following command:
+```sh
+python3 -m pt2.trainer
+```

@@ -10,11 +10,13 @@ class ResidualEncoder(torch.nn.Module):
             LConvBlock(dim, 17, 0.1),
             LConvBlock(dim, 17, 0.1),
             LConvBlock(dim, 17, 0.1),
+            torch.nn.LayerNorm(dim)
         )
         self.stack2 = torch.nn.Sequential(
             LConvBlock(dim, 3, 0.1), LConvBlock(dim, 3, 0.1),
             LConvBlock(dim, 3, 0.1), LConvBlock(dim, 3, 0.1),
             LConvBlock(dim, 3, 0.1), LConvBlock(dim, 3, 0.1),
+            torch.nn.LayerNorm(dim)
         )
 
         self.projection = torch.nn.Linear(dim, dim*2)
