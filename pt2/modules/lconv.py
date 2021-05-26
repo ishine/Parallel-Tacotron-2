@@ -6,21 +6,19 @@ import numpy
 import torch
 import torch.nn.functional as F
 from torch import nn
-
 MIN_VALUE = float(numpy.finfo(numpy.float32).min)
 
 
 class LConv(nn.Module):
     """Lightweight Convolution layer.
-
     This implementation is based on
     https://github.com/pytorch/fairseq/tree/master/fairseq
 
     Args:
-        wshare (int): the number of kernel of convolution
         n_feat (int): the number of features
-        dropout_rate (float): dropout_rate
+        wshare (int): the number of kernel of convolution (num. of heads)
         kernel_size (int): kernel size (length)
+        dropout_rate (float): dropout_rate
         use_kernel_mask (bool): Use causal mask or not for convolution kernel
         use_bias (bool): Use bias term or not.
 
@@ -28,10 +26,10 @@ class LConv(nn.Module):
 
     def __init__(
         self,
-        wshare,
         n_feat,
-        dropout_rate,
+        wshare,
         kernel_size,
+        dropout_rate=0.1,
         use_kernel_mask=False,
         use_bias=False,
     ):
@@ -44,11 +42,6 @@ class LConv(nn.Module):
         self.dropout_rate = dropout_rate
         self.kernel_size = kernel_size
         self.padding_size = int(kernel_size / 2)
-
-        # linear -> GLU -> lightconv -> linear
-        self.linear1 = nn.Linear(n_feat, n_feat * 2)
-        self.linear2 = nn.Linear(n_feat, n_feat)
-        self.act = nn.GLU()
 
         # lightconv related
         self.weight = nn.Parameter(
@@ -84,12 +77,6 @@ class LConv(nn.Module):
         B, T, C = x.size()
         H = self.wshare
 
-        # first liner layer
-        x = self.linear1(x)
-
-        # GLU activation
-        x = self.act(x)
-
         # lightconv
         x = x.transpose(1, 2).contiguous().view(-1, H, T)  # B x C x T
         weight = F.dropout(self.weight, self.dropout_rate, training=self.training)
@@ -108,26 +95,30 @@ class LConv(nn.Module):
             mask = mask.transpose(-1, -2)
             x = x.masked_fill(mask == 0, 0.0)
 
-        # second linear layer
-        x = self.linear2(x)
         return x
 
 
 class LConvBlock(torch.nn.Module):
-    def __init__(self, dim, kernel_size, dropout_rate):
+    def __init__(self, dim, kernel_size, dropout_rate=0.1):
         super().__init__()
 
+        self.layer_norm1 = torch.nn.LayerNorm(dim)
+        self.glu_fc = torch.nn.Linear(dim, dim*2)
         self.glu = torch.nn.GLU()
-        self.lconv = LConv(8, dim, dropout_rate, kernel_size)
+        self.lconv = LConv(dim, 8, kernel_size, dropout_rate)
+        self.layer_norm2 = torch.nn.LayerNorm(dim)
         self.fc1 = torch.nn.Linear(dim, dim*4)
         self.fc2 = torch.nn.Linear(dim*4, dim)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask=None):
         x_res = x
+        x = self.layer_norm1(x)
+        x = self.glu_fc(x)
+        x = self.glu(x)
         x = self.lconv(x, None, None, mask=mask)
         x = x + x_res
-
         x_res = x
+        x = self.layer_norm2(x)
         x = self.fc1(x)
         x = torch.relu(x)
         x = self.fc2(x)
