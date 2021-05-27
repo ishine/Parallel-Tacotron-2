@@ -3,10 +3,11 @@ import importlib.util
 import logging
 from pathlib import Path
 
+import einops
 import torch
 from torch.functional import einsum
 from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence, pad_sequence
-import einops
+
 from pt2.dataloader import create_train_val_dataloader
 from pt2.modules.mel_filter import MelFilter
 
@@ -25,12 +26,11 @@ def loss_fn(model, device, melfilter, inputs, config):
     tokens = tokens.to(device)
     token_masks = token_masks.to(device)
 
-    
     wav_lengths = torch.LongTensor([w.shape[0] for w in wavs])
-    duration_gts = wav_lengths.float() / config.sample_rate
+    duration_gts = (wav_lengths.float() / config.sample_rate).to(device)
     wavs = pad_sequence(wavs, batch_first=True)
-    wavs = wavs.float() / (2**15)  # only work for 16bit data
-    mel_gts = melfilter(wavs.to(device))
+    wavs = wavs.to(device).float() / (2**15)  # only work for 16bit data
+    mel_gts = melfilter(wavs)
     mel_gts = einops.rearrange(mel_gts, 'N C W -> N W C')
 
     # model forward
@@ -43,15 +43,14 @@ def loss_fn(model, device, melfilter, inputs, config):
     duration_hats = torch.where(token_masks, torch.zeros_like(duration_hats), duration_hats)
     duration_hats = torch.sum(duration_hats, dim=1)
 
-
     duration_loss = torch.abs(duration_hats - duration_gts).mean()
 
     # mse loss
     mel_lengths = wav_lengths / config.hop_length
     L = mel_gts.shape[1]
-    mel_mask = (torch.arange(0, L)[None, :] < mel_lengths[:, None]).byte()
-    mel_losses = [ torch.abs(mel - mel_gts).mean(-1) for mel in mel_hats ]
-    mel_losses = [ torch.sum(l * mel_mask) / torch.sum(mel_mask) for l in mel_losses] 
+    mel_mask = (torch.arange(0, L)[None, :] < mel_lengths[:, None]).byte().to(device)
+    mel_losses = [torch.abs(mel - mel_gts).mean(-1) for mel in mel_hats]
+    mel_losses = [torch.sum(l * mel_mask) / torch.sum(mel_mask) for l in mel_losses]
     mel_loss = sum(mel_losses) / len(mel_losses)
     loss = mel_loss + 100 * duration_loss
     return loss
@@ -85,12 +84,16 @@ def train(
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
+            if step % 100 == 0:
+                train_loss = sum(losses) / len(losses)
+                print(f' step {step:06d}  train loss {train_loss:3.5f}\r', end='')
+
         train_loss = sum(losses) / len(losses)
         val_losses = []
         model.eval()
         for batch in val_dataloader:
             val_loss = loss_fn(model, device, melfilter, batch, config)
-            val_losses.append(val_loss)
+            val_losses.append(val_loss.item())
         val_loss = sum(val_losses) / len(val_losses)
         logging.info(f'step {step}  train loss {train_loss:.5f}  val loss {val_loss:.5f}')
         lr_scheduler.step(val_loss)
