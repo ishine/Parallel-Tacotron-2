@@ -19,11 +19,12 @@ class ParallelTacotron2(torch.nn.Module):
         self.upsampler = Upsampling(config.upsampling_dim)
         self.decoder = Decoder(config.decoder_dim, config.decoder_num_blocks, config.n_mels)
 
-    def forward(self, text, text_mask, speaker) -> Tensor:
+    def forward(self, text, text_mask, speaker, T) -> Tensor:
         x = self.encoder(text, text_mask, speaker)
         x = einops.rearrange(x, 'N C W -> N W C')
         x = self.encoder_projection(x)
         # x = einops.rearrange(x, 'N W C -> N C W')
         durations, features = self.duration_predictor(x)
-        self.upsampler(512, durations, features)
-        return x
+        x = self.upsampler(T, durations, features)
+        x = self.decoder(x)
+        return x, durations

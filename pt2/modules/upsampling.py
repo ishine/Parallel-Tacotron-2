@@ -22,38 +22,43 @@ class Upsampling(torch.nn.Module):
         super().__init__()
 
         self.conv1 = torch.nn.Conv1d(dim, 8, 3, 1, 1)
+        self.bn1 = torch.nn.BatchNorm1d(8)
         self.conv2 = torch.nn.Conv1d(dim, 8, 3, 1, 1)
+        self.bn2 = torch.nn.BatchNorm1d(8)
 
-        self.swish_block1 = SwishBlock(8+1+1, 16)
-        self.swish_block2 = SwishBlock(8+1+1, 2)
-        self.projection1 = torch.nn.Linear(16, 1)
-        self.projection2 = torch.nn.Linear(2, 1)
+        self.swish_block1 = SwishBlock(8+1+1, 2)
+        self.swish_block2 = SwishBlock(8+1+1, 16)
+        self.projection1 = torch.nn.Linear(2, dim)
+        self.projection2 = torch.nn.Linear(16, 1)
 
     def forward(self, T, durations: torch.Tensor, features: torch.Tensor):
-        raise NotImplementedError()
         features = einops.rearrange(features, 'N W C -> N C W')
-        left = torch.nn.functional.silu(self.conv1(features))
-        right = torch.nn.functional.silu(self.conv2(features))
+        left = torch.nn.functional.silu(
+            self.bn1(self.conv1(features))
+        )
+        right = torch.nn.functional.silu(
+            self.bn2(self.conv2(features))
+        )
         left = einops.rearrange(left, 'N C W -> N W C')
+        left = einops.repeat(left, 'N W C -> N W T C', T=T.shape[0])
         right = einops.rearrange(right, 'N C W -> N W C')
+        right = einops.repeat(right, 'N W C -> N W T C', T=T.shape[0])
 
         token_end = torch.cumsum(durations, dim=1)
         token_start = token_end - durations
 
-        S = T - token_start
-        E = token_end - T
+        S = T[None, None, :] - token_start
+        E = token_end - T[None, None, :]
 
-        import pdb
-        pdb.set_trace()
-        xleft = torch.cat((S, E, left), dim=-1)
-        xright = torch.cat((S, E, right), dim=-1)
+        xleft = torch.cat((S[..., None], E[..., None], left), dim=-1)
+        xright = torch.cat((S[..., None], E[..., None], right), dim=-1)
 
         C = self.swish_block1(xleft)
         xright = self.swish_block2(xright)
-        xright = self.projection2(xright)
+        xright = self.projection2(xright).squeeze(-1)
         W = torch.softmax(xright, dim=1)
-        xright = torch.bmm(features, W)
-        xleft = torch.einsum('nk,nkp->np', W[..., 0], C)
+        xright = torch.einsum('nkt,ndk->ntd', W, features)
+        xleft = torch.einsum('nkt,nktp->ntp', W, C)
         xleft = self.projection1(xleft)
         O = xleft + xright
         return O

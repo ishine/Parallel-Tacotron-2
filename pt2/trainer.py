@@ -4,15 +4,16 @@ import logging
 from pathlib import Path
 
 import torch
+from torch.functional import einsum
 from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence, pad_sequence
-
+import einops
 from pt2.dataloader import create_train_val_dataloader
 from pt2.modules.mel_filter import MelFilter
 
 from .model import ParallelTacotron2
 
 
-def loss_fn(model, device, melfilter, inputs):
+def loss_fn(model, device, melfilter, inputs, config):
     # prepare data
     idents, tokens, wavs = zip(*inputs)
     tokens = [torch.Tensor(t).long() for t in tokens]
@@ -24,16 +25,35 @@ def loss_fn(model, device, melfilter, inputs):
     tokens = tokens.to(device)
     token_masks = token_masks.to(device)
 
+    
+    wav_lengths = torch.LongTensor([w.shape[0] for w in wavs])
+    duration_gts = wav_lengths.float() / config.sample_rate
+    wavs = pad_sequence(wavs, batch_first=True)
+    wavs = wavs.float() / (2**15)  # only work for 16bit data
+    mel_gts = melfilter(wavs.to(device))
+    mel_gts = einops.rearrange(mel_gts, 'N C W -> N W C')
+
     # model forward
 
     speaker = torch.zeros(B).long().to(device)
-    mel_hats = model(tokens, token_masks, speaker)
-    wavs, wav_lengths = pad_sequence(wavs, batch_first=True)
-    wavs = wavs.float() / (2**15)  # only work for 16bit data
-    mel_gts = melfilter(wavs.to(device))
+    T = torch.arange(0, mel_gts.shape[1], dtype=torch.float32) * config.hop_length / config.sample_rate
+    T = T.to(device)
+    mel_hats, duration_hats = model(tokens, token_masks, speaker, T)
+    duration_hats = duration_hats.squeeze(-1)
+    duration_hats = torch.where(token_masks, torch.zeros_like(duration_hats), duration_hats)
+    duration_hats = torch.sum(duration_hats, dim=1)
+
+
+    duration_loss = torch.abs(duration_hats - duration_gts).mean()
 
     # mse loss
-    loss = torch.mean(torch.abs(mel_hats - mel_gts))
+    mel_lengths = wav_lengths / config.hop_length
+    L = mel_gts.shape[1]
+    mel_mask = (torch.arange(0, L)[None, :] < mel_lengths[:, None]).byte()
+    mel_losses = [ torch.abs(mel - mel_gts).mean(-1) for mel in mel_hats ]
+    mel_losses = [ torch.sum(l * mel_mask) / torch.sum(mel_mask) for l in mel_losses] 
+    mel_loss = sum(mel_losses) / len(mel_losses)
+    loss = mel_loss + 100 * duration_loss
     return loss
 
 
@@ -60,7 +80,7 @@ def train(
         epoch = epoch + 1
         for batch in train_dataloader:
             step = step + 1
-            loss = loss_fn(model, device, melfilter, batch)
+            loss = loss_fn(model, device, melfilter, batch, config)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -69,7 +89,7 @@ def train(
         val_losses = []
         model.eval()
         for batch in val_dataloader:
-            val_loss = loss_fn(model, device, melfilter, batch)
+            val_loss = loss_fn(model, device, melfilter, batch, config)
             val_losses.append(val_loss)
         val_loss = sum(val_losses) / len(val_losses)
         logging.info(f'step {step}  train loss {train_loss:.5f}  val loss {val_loss:.5f}')

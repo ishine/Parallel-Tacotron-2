@@ -17,7 +17,7 @@ class Config(NamedTuple):
     upsampling_dim = 64
     # decoder
     decoder_dim = 64
-    decoder_num_blocks = 3
+    decoder_num_blocks = 6
 
     # dsp
     n_mels = 80
