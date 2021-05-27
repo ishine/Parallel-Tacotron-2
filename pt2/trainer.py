@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 import einops
+import matplotlib.pyplot as plt
 import torch
 from torch.functional import einsum
 from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence, pad_sequence
@@ -14,7 +15,7 @@ from pt2.modules.mel_filter import MelFilter
 from .model import ParallelTacotron2
 
 
-def loss_fn(model, device, melfilter, inputs, config):
+def loss_fn(model, device, melfilter, inputs, config, return_aux=False):
     # prepare data
     idents, tokens, wavs = zip(*inputs)
     tokens = [torch.Tensor(t).long() for t in tokens]
@@ -53,7 +54,10 @@ def loss_fn(model, device, melfilter, inputs, config):
     mel_losses = [torch.sum(l * mel_mask) / torch.sum(mel_mask) for l in mel_losses]
     mel_loss = sum(mel_losses) / len(mel_losses)
     loss = mel_loss + 100 * duration_loss
-    return loss
+    if return_aux:
+        return loss, (duration_hats, duration_gts, mel_hats[-1], mel_gts)
+    else:
+        return loss
 
 
 def train(
@@ -92,10 +96,27 @@ def train(
         val_losses = []
         model.eval()
         for batch in val_dataloader:
-            val_loss = loss_fn(model, device, melfilter, batch, config)
+            val_loss, aux = loss_fn(model, device, melfilter, batch, config, return_aux=True)
             val_losses.append(val_loss.item())
         val_loss = sum(val_losses) / len(val_losses)
         logging.info(f'step {step}  train loss {train_loss:.5f}  val loss {val_loss:.5f}')
+
+        # logging
+        plt.figure(figsize=(5, 2))
+        plt.plot(aux[0].data.cpu().numpy())
+        plt.plot(aux[1].data.cpu().numpy())
+        plt.legend(['predicted', 'groundtruth'])
+        plt.savefig(args.checkpoint_dir / f'{args.model_prefix}-{epoch:05d}-duration.png')
+        plt.close()
+
+        plt.figure(figsize=(5, 4))
+        plt.subplot(2, 1, 1)
+        plt.imshow(aux[2][0].data.cpu().numpy().T, aspect='auto', origin='lower')
+        plt.subplot(2, 1, 2)
+        plt.imshow(aux[3][0].data.cpu().numpy().T, aspect='auto', origin='lower')
+        plt.savefig(args.checkpoint_dir / f'{args.model_prefix}-{epoch:05d}-mel.png')
+        plt.close()
+
         lr_scheduler.step(val_loss)
         if epoch % args.epochs_per_checkpoint == 0:
             fn = args.checkpoint_dir / f'{args.model_prefix}-{epoch:05d}.pth'
