@@ -99,7 +99,7 @@ def train(
             val_loss, aux = loss_fn(model, device, melfilter, batch, config, return_aux=True)
             val_losses.append(val_loss.item())
         val_loss = sum(val_losses) / len(val_losses)
-        logging.info(f'step {step}  train loss {train_loss:.5f}  val loss {val_loss:.5f}')
+        logging.info(f'epoch {epoch:05d}  step {step:07d}  train loss {train_loss:.5f}  val loss {val_loss:.5f}')
 
         # logging
         plt.figure(figsize=(5, 2))
@@ -114,7 +114,13 @@ def train(
         plt.imshow(aux[2][0].data.cpu().numpy().T, aspect='auto', origin='lower')
         plt.subplot(2, 1, 2)
         plt.imshow(aux[3][0].data.cpu().numpy().T, aspect='auto', origin='lower')
-        plt.savefig(args.checkpoint_dir / f'{args.model_prefix}-{epoch:05d}-mel.png')
+        plt.savefig(args.checkpoint_dir / f'{args.model_prefix}-{epoch:05d}-melspec.png')
+        plt.close()
+
+        plt.figure(figsize=(5, 4))
+        plt.imshow(model.upsampler.attention.cpu().data.numpy(), aspect='auto')
+        plt.colorbar()
+        plt.savefig(args.checkpoint_dir / f'{args.model_prefix}-{epoch:05d}-attention.png')
         plt.close()
 
         lr_scheduler.step(val_loss)

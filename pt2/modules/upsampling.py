@@ -57,6 +57,7 @@ class Upsampling(torch.nn.Module):
         xright = self.swish_block2(xright)
         xright = self.projection2(xright).squeeze(-1)
         W = torch.softmax(xright, dim=1)
+        self.attention = W.detach().data[0]
         xright = torch.einsum('nkt,ndk->ntd', W, features)
         xleft = torch.einsum('nkt,nktp->ntp', W, C)
         xleft = self.projection1(xleft)
