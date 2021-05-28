@@ -13,9 +13,10 @@ from pt2.dataloader import create_train_val_dataloader
 from pt2.modules.mel_filter import MelFilter
 
 from .model import ParallelTacotron2
+from .modules.softdtw import SoftDTW
 
 
-def loss_fn(model, device, melfilter, inputs, config, return_aux=False):
+def loss_fn(model, device, melfilter, inputs, config, return_aux, softdtw):
     # prepare data
     idents, tokens, wavs = zip(*inputs)
     tokens = [torch.Tensor(t).long() for t in tokens]
@@ -50,8 +51,12 @@ def loss_fn(model, device, melfilter, inputs, config, return_aux=False):
     mel_lengths = wav_lengths / config.hop_length
     L = mel_gts.shape[1]
     mel_mask = (torch.arange(0, L)[None, :] < mel_lengths[:, None]).byte().to(device)
-    mel_losses = [torch.abs(mel - mel_gts).mean(-1) for mel in mel_hats]
-    mel_losses = [torch.sum(l * mel_mask) / torch.sum(mel_mask) for l in mel_losses]
+    mel_losses = []
+    for mel in mel_hats:
+        # import pdb; pdb.set_trace()
+        mel_losses.append(softdtw(mel, mel_gts).mean())
+    # mel_losses = [torch.abs(mel - mel_gts).mean(-1) for mel in mel_hats]
+    # mel_losses = [torch.sum(l * mel_mask) / torch.sum(mel_mask) for l in mel_losses]
     mel_loss = sum(mel_losses) / len(mel_losses)
     loss = mel_loss + 100 * duration_loss
     if return_aux:
@@ -75,6 +80,7 @@ def train(
     step = last_training_step
     epoch = last_epoch
     device = torch.device(args.device)
+    softdtw = SoftDTW(use_cuda=(args.device == 'cuda'), gamma=0.05, bandwidth=60)
     melfilter = MelFilter(config).to(device)
     logging.info('Start training')
     while step < args.training_steps:
@@ -83,7 +89,7 @@ def train(
         epoch = epoch + 1
         for batch in train_dataloader:
             step = step + 1
-            loss = loss_fn(model, device, melfilter, batch, config)
+            loss = loss_fn(model, device, melfilter, batch, config, False, softdtw)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -96,7 +102,7 @@ def train(
         val_losses = []
         model.eval()
         for batch in val_dataloader:
-            val_loss, aux = loss_fn(model, device, melfilter, batch, config, return_aux=True)
+            val_loss, aux = loss_fn(model, device, melfilter, batch, config, True, softdtw)
             val_losses.append(val_loss.item())
         val_loss = sum(val_losses) / len(val_losses)
         logging.info(f'epoch {epoch:05d}  step {step:07d}  train loss {train_loss:.5f}  val loss {val_loss:.5f}')

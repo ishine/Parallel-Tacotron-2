@@ -69,8 +69,8 @@ def compute_softdtw_cuda(D, gamma, bandwidth, max_i, max_j, n_passes, R):
             # Don't compute if outside bandwidth
             if not (abs(i - j) > bandwidth > 0):
                 r0 = -R[b, i - 1, j - 1] * inv_gamma
-                r1 = -R[b, i - 1, j] * inv_gamma
-                r2 = -R[b, i, j - 1] * inv_gamma
+                r1 = (-R[b, i - 1, j] - 100.) * inv_gamma
+                r2 = (-R[b, i, j - 1] - 100.) * inv_gamma
                 rmax = max(max(r0, r1), r2)
                 rsum = math.exp(r0 - rmax) + math.exp(r1 - rmax) + math.exp(r2 - rmax)
                 softmin = -gamma * (math.log(rsum) + rmax)
@@ -109,8 +109,8 @@ def compute_softdtw_backward_cuda(D, R, inv_gamma, bandwidth, max_i, max_j, n_pa
 
             # Don't compute if outside bandwidth
             if not (abs(i - j) > bandwidth > 0):
-                a = math.exp((R[k, i + 1, j] - R[k, i, j] - D[k, i + 1, j]) * inv_gamma)
-                b = math.exp((R[k, i, j + 1] - R[k, i, j] - D[k, i, j + 1]) * inv_gamma)
+                a = math.exp((R[k, i + 1, j] - R[k, i, j] - D[k, i + 1, j] + 100) * inv_gamma)
+                b = math.exp((R[k, i, j + 1] - R[k, i, j] - D[k, i, j + 1] + 100) * inv_gamma)
                 c = math.exp((R[k, i + 1, j + 1] - R[k, i, j] - D[k, i + 1, j + 1]) * inv_gamma)
                 E[k, i, j] = E[k, i + 1, j] * a + E[k, i, j + 1] * b + E[k, i + 1, j + 1] * c
 
@@ -206,8 +206,8 @@ def compute_softdtw(D, gamma, bandwidth):
                     continue
 
                 r0 = -R[b, i - 1, j - 1] / gamma
-                r1 = -R[b, i - 1, j] / gamma
-                r2 = -R[b, i, j - 1] / gamma
+                r1 = (-R[b, i - 1, j] - 100.) / gamma
+                r2 = (-R[b, i, j - 1] - 100.) / gamma
                 rmax = max(max(r0, r1), r2)
                 rsum = np.exp(r0 - rmax) + np.exp(r1 - rmax) + np.exp(r2 - rmax)
                 softmin = - gamma * (np.log(rsum) + rmax)
@@ -240,8 +240,8 @@ def compute_softdtw_backward(D_, R, gamma, bandwidth):
                 if 0 < bandwidth < np.abs(i - j):
                     continue
 
-                a0 = (R[k, i + 1, j] - R[k, i, j] - D[k, i + 1, j]) / gamma
-                b0 = (R[k, i, j + 1] - R[k, i, j] - D[k, i, j + 1]) / gamma
+                a0 = (R[k, i + 1, j] - R[k, i, j] - D[k, i + 1, j] + 100.) / gamma
+                b0 = (R[k, i, j + 1] - R[k, i, j] - D[k, i, j + 1] + 100.) / gamma
                 c0 = (R[k, i + 1, j + 1] - R[k, i, j] - D[k, i + 1, j + 1]) / gamma
                 a = np.exp(a0)
                 b = np.exp(b0)
@@ -341,7 +341,7 @@ class SoftDTW(torch.nn.Module):
         d = x.size(2)
         x = x.unsqueeze(2).expand(-1, n, m, d)
         y = y.unsqueeze(1).expand(-1, n, m, d)
-        return torch.pow(x - y, 2).sum(3)
+        return torch.abs(x - y).mean(3)
 
     def forward(self, X, Y):
         """
